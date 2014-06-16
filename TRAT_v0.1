@@ -1,0 +1,430 @@
+LOAD TRAT  / Trajectory Reconstruction and Analysis Tool --> Tool for reconstruct trajectories from GPS-Data and calculate movement characteristics from the data.
+
+NOTICE! Following R packages should be installed before using this tool:
+sp, maptools, rgdal
+You can install those packages by activating the next command (set cursor on top of the line and press ESC):
+R> install.packages(c('sp','maptools','rgdal'))
+
+- COMMITCHANGES / If you want to make changes to the code, it is possible to commit changes from here.
+............................................................................................................................................................................................................................................................................................................
+- INSTRUCTIONS:              / READ BY PRESSING ESC!
+............................................................................................................................................................................................................................................................................................................
+IMPORT DATA INTO TRAT:
+ACTIVATE BY PRESSING F2+ESC
+REPLACE <filename>,                                        ,C / LINES=A+1     / Select the inputfile (e.g. BoatData.csv) --> data should be in the same folder as TRAT.EDT file.
+REPLACE <identifier>,                                      ,C / LINES=D,z     / Choose an identifier for the outputfile (e.g. May13-Aug13)
+- TIMES
+............................................................................................................................................................................................................................................................................................................
+SELECT TIMEFRAME (OPTIONAL):
+- TIMES
+REPLACE <startDate>,          01.01.2011                   ,C / LINES=B,Z     / Choose the start date for the analysis (DD.MM.YYYY)
+REPLACE <endDate>,            31.12.2019                   ,C / LINES=B,Z     / Choose the end date for the analysis. (DD.MM.YYYY)                                                                                                      s
+- SHIPS
+............................................................................................................................................................................................................................................................................................................
+SELECT VESSELS FOR THE ANALYSIS (OPTIONAL):
+Vessels: b1=BOAT1 |  b2=BOAT2  | b3=BOAT3
+
+- SHIPS
+REPLACE <vessels> ,           b1+b2+b3                     ,C / LINES=V+1,Z     / Choose the vessels that you want to include in the analysis. (e.g. b1+b2+b3)
+- DIRECTIONS
+............................................................................................................................................................................................................................................................................................................
+SELECT NAVIGATION DIRECTION INCLUDED IN ANALYSIS (OPTIONAL):
+Direction: 1=Away from Iquitos (upstream)   2=Towards Iquitos (downstream)
+- DIRECTIONS
+REPLACE <direction> ,           1+2                          ,C / LINES=s+1,Z     / Choose the navigation direction that you want to include in the analysis.
+- ACTIVATING
+............................................................................................................................................................................................................................................................................................................
+- ACTIVATING
+/ACTIVATE _
+
+............................................................................................................................................................................................................................................................................................................
+TXTCONV <filename>.csv,textMod.txt
+CONVERSIONS:
+T "BOAT III" "BOAT3"
+T "BOAT II" "BOAT2"
+T "BOAT I" "BOAT1"
+T "NULL" ""
+T "+0000" ""
+T ".000Z" ""
+T ";" ","
+T "T" " "
+T "RACK" "TRACK"
+D "
+END
+............................................................................................................................................................................................................................................................................................................
+FILE SAVE textMod.txt TO NEW inputData / DELIMITER=, NAMES=1 FIRST=2
+............................................................................................................................................................................................................................................................................................................
+FILTER OUT INCORRECT RECORDS:
+FILE COPY inputData TO NEW inputDataClean / SELECT=H8*h81+H6*h61+E8*e81+miss  VARS=id,lat,lon,time,timegmts,esnname,messaget
+
+miss=lat:!MISSING
+H8=id:BOAT2  h81=esnname:BOAT2      H6=id:BOAT1     h61=esnname:BOAT1
+E8=id:BOAT3  e81=esnname:BOAT3
+............................................................................................................................................................................................................................................................................................................
+TIMEZONE CORRECTION:
+FILE LOAD inputDataClean TO R>data / Load the data into R
+............................................................................................................................................................................................................................................................................................................
+R ö,ä
+
+Mdata<-as.matrix(data)
+tInfo<-Mdata[,c(4)]
+Cdata<-as.character(tInfo)
+time<-strptime(Cdata, "%Y-%m-%d %H:%M:%S")
+pb.date<-as.POSIXct(time,tz="Europe/London")
+perutime<-format(pb.date, tz="America/Lima")
+join<-cbind(data,perutime)
+selected<-join[,c(1,2,3,8,5,6,7)]
+names(selected)[4]<-c('Ptime')
+
+write.table(selected, file = "Perutime.csv", dec=".", sep=",", row.names=FALSE, quote=FALSE)
+
+............................................................................................................................................................................................................................................................................................................
+FILE SAVE Perutime.csv TO NEW GPSDataKorjattu  / DELIMITER=, NAMES=1 FIRST=2 NEWSPACE=240,30
+VAR min:8=(timegmtsec/60)-21564000 TO GPSDataKorjattu / Muunnetaan aikatiedon aloituspäivää!! Muuten tulee laskelmallisia ongelmia!!!
+VAR time:S24=MISSING TO GPSDataKorjattu
+VAR str(time)=str(Ptime,1,10)&"T"&str(Ptime,12,8)&".000Z" TO GPSDataKorjattu
+............................................................................................................................................................................................................................................................................................................
+VAR date:S10=MISSING TO GPSDataKorjattu  / "yyyy-mm-dd"
+VAR str(date)=str(time,1,10) TO GPSDataKorjattu
+VAR Julian:8=MISSING TO GPSDataKorjattu
+VAR weekday:S3=MISSING TO GPSDataKorjattu
+VAR dayNum:2=MISSING TO GPSDataKorjattu
+............................................................................................................................................................................................................................................................................................................
+DATE GPSDataKorjattu / IDATE=YYYYMMDD IDEL=-
+VARS=date(D),Julian(J),weekday(a),dayNum(j)
+
+............................................................................................................................................................................................................................................................................................................
+DATE <startDate>,Julian
+............................................................................................................................................................................................................................................................................................................
+DATE <endDate>,Julian
+COPYBLO B+2,53,B+2,68,C+4,20
+COPYBLO C+1,53,C+1,68,C+5,20
+REPLACE <aloitus>,                       ,C / LINES=D+1
+REPLACE <lopetus>,                       ,C / LINES=D+1
+............................................................................................................................................................................................................................................................................................................
+FILE COPY GPSDataKorjattu TO NEW GPSDataAika / IND=Julian,<aloitus>,<lopetus> NEWSPACE=240,30
+FILE SORT GPSDataAika BY min TO GPSDataAikaLaivat    / Sortataan havainnot aikatiedon perusteella. Kannassa jotain sekoilua.
+VAR obs:2=ORDER TO GPSDataAikaLaivat
+
+FILE_SORT_MASK=1
+SELECT=<vessels>
+
+b2=id:BOAT2  B2=id:BOAT2
+b3=id:BOAT3  B3=id:BOAT3
+b1=id:BOAT1  B1=id:BOAT1
+............................................................................................................................................................................................................................................................................................................
+OPTION FOR SELECTION BASED ON WEEKDAYS
+FILE COPY GPSDataAikaLaivat TO NEW GPSData<identifier> / NEWSPACE=240,30
+
+
+SELECT=Ma+Ti+Ke+To+Pe+La+Su
+
+Ma=weekday:Mon  Ti=weekday:Tue  Ke=weekday:Wed  To=weekday:Thu
+Pe=weekday:Fri  La=weekday:Sat  Su=weekday:Sun
+.................................................................................................................................................................................................
+SPATIAL JOIN TO THE CLOSEST REFERENCE POINT (R implementation):
+
+FILE COPY GPSData<identifier> TO NEW RDATA
+FILE SAVE Opetusdatapisteet.csv TO NEW OPETUSDATA / DELIMITER=; FIRST=2 NAMES=1
+FILE LOAD OPETUSDATA TO R>refpoint
+.................................................................................................................................................................................................
+FILE LOAD RDATA TO R>boatpoint / VARS=lat,lon,obs   / HUOM. TUHOAA SAMALLA SVO FILEEN! TÄYTYY TEHDÄ KOPIO!
+R a,b
+ spatial.join <- function(x, y, lat, lon, obs, xlat, xlon) {
+     ## construct data frame d in which d[i,] contains information
+     ## associated with the closest point in y to x[i,]
+     xpos <- as.matrix(x[,c(lat, lon, obs)])
+     xposl <- lapply(seq.int(nrow(x)), function(i) xpos[i,])
+     ypos <- t(as.matrix(y[,c(xlat, xlon)]))
+     yinfo <- y[, colnames(y)]
+
+     get.match.and.dist <- function(point) {
+         sqdists <- colSums((point - ypos)^2)
+         ind <- which.min(sqdists)
+         c(ind, sqrt(sqdists[ind]))
+     }
+     match <- sapply(xposl, get.match.and.dist)
+     cbind(xpos, mindist=match[2,], yinfo[match[1,],])
+ }
+ join <- spatial.join(boatpoint, refpoint, 'lat', 'lon', 'obs', 'xlat', 'xlon')
+.................................................................................................................................................................................................
+FILE SAVE R>join TO NEW GPSData / NEWSPACE=240,30
+VAR mindist:8=MISSING TO GPSData<identifier>
+VAR id_route:2=MISSING TO GPSData<identifier>
+VAR routepoint:8=MISSING TO GPSData<identifier>
+VAR distance:2=MISSING TO GPSData<identifier>
+VAR AlterRoute:2=MISSING TO GPSData<identifier>
+VAR idLocat:S10=MISSING TO GPSData<identifier>
+VAR Nlocat:S10=MISSING TO GPSData<identifier>
+VAR MainRiver:S10=MISSING TO GPSData<identifier>
+VAR River:S10=MISSING TO GPSData<identifier>
+VAR SinIndex:8=MISSING TO GPSData<identifier>
+.................................................................................................................................................................................................
+FILE COPY GPSData TO GPSData<identifier> / VARS=obs,mindist,id_route,routepoint,distance,AlterRoute,idLocat,Nlocat,MainRiver,River,SinIndex MATCH=#
+
+.................................................................................................................................................................................................
+FILE COPY GPSData<identifier> TO NEW BOAT1GPS<identifier> / CASES=id:BOAT1 VARS=ALL NEWSPACE=360,80
+.................................................................................................................................................................................................
+FILE COPY GPSData<identifier> TO NEW BOAT2GPS<identifier> / CASES=id:BOAT2 VARS=ALL NEWSPACE=360,80
+.................................................................................................................................................................................................
+FILE COPY GPSData<identifier> TO NEW BOAT3GPS<identifier> / CASES=id:BOAT3 VARS=ALL NEWSPACE=360,80
+.................................................................................................................................................................................................
+BOAT1:
+VAR IDnum:2=ORDER TO BOAT1GPS<identifier>           / Luodaan järjestysnumero (ID)!
+VAR Dmin=if(ORDER=1)then(0)else(min[0]-min[-1]) TO BOAT1GPS<identifier> / Aikojen erotus minuuteissa!
+VAR Dhour=Dmin/60 TO BOAT1GPS<identifier>      / Muunnos minuuteista tunneiksi!
+VAR DJulian:2=if(ORDER=1)then(1)else(Julian-Julian[-1]) TO BOAT1GPS<identifier>
+VAR Day:2=1 TO BOAT1GPS<identifier>
+VAR Day=if(ORDER=1)then(1)else(if(Julian[0]>Julian[-1])then(Day[-1]+DJulian)else(Day[-1])) TO BOAT1GPS<identifier>
+VAR Destin:2=1 TO BOAT1GPS<identifier>
+VAR Dir:2=MISSING TO BOAT1GPS<identifier>
+VAR Dir=if(ORDER=1)then(Dir[1])else(if(routepoint[0]>routepoint[-1])then(1)else(if(routepoint[0]<routepoint[-1])then(2)else(0))) TO BOAT1GPS<identifier> / Ajosuunta.
+VAR MDir:2=MISSING TO BOAT1GPS<identifier>
+VAR MDir=if(ORDER=1)then(Dir)else(BRID2) TO BOAT1GPS<identifier>
+    BRID2=if(Dir=0)then(MDir[-1])else(BRID3)     / Suunta pysyy samana vaikka ollaankin paikallaan ja jos vastakkaista suuntaa on vain vähän matkaa (5 havaintoa raja).
+    BRID3=if(Dir[1]=MDir[-1])then(MDir[-1])else(BRID4)
+    BRID4=if(Dir[3]=MDir[-1])then(MDir[-1])else(BRID5)
+    BRID5=if(Dir[5]=MDir[-1])then(MDir[-1])else(Dir)
+VAR RDir:2=MISSING TO BOAT1GPS<identifier>                     / Suunnan varmistaja. Eliminoi lyhyet toiseen suuntaan kuljetut pätkät (20 havaintoa)
+VAR RDir=if(ORDER=1)then(MDir)else(CRID2) TO BOAT1GPS<identifier>
+    CRID2=if(RDir[-1]=MDir[20])then(RDir[-1])else(CRID3)
+    CRID3=if(MDir=MDir[1])then(MDir)else(MDir)
+VAR STOP:2=MISSING TO BOAT1GPS<identifier>
+VAR STOP=if(Dir=0)then(1)else(0) TO BOAT1GPS<identifier> / Jos ollaan paikallaan arvoksi tulee 1.
+VAR TSTOP:8=MISSING TO BOAT1GPS<identifier>
+VAR TSTOP=if(STOP=0)then(0)else(Dhour+TSTOP[-1]) TO BOAT1GPS<identifier> / Tämän muuttujan avulla voidaan kasvattaa reittiID:tä jos ollaan tarpeeksi kauan paikallaan.
+VAR DDistance:8=if(ORDER=1)then(0)else(abs(distance[0]-distance[-1])) TO BOAT1GPS<identifier> / Havaintojen välinen välimatka.
+VAR speed:8=if(ORDER=1)then(0)else(DDistance/Dhour) TO BOAT1GPS<identifier>
+VAR routeID:2=MISSING TO BOAT1GPS<identifier>
+VAR routeID:2=if(ORDER=1)then(1)else(DRID2) TO BOAT1GPS<identifier>
+    DRID2=if(TSTOP<36)then(DRID4)else(DRID3)                                                / "Paikallaanololaukaisin." Jos träkkäys jatkuu paikallaan ollessa yli 36 tuntia reittiID vaihtuu.
+    DRID3=if(TSTOP[-1]>=36)then(routeID[-1])else(routeID[-1]+1)                             / Jos tauko jatkuu yli 36 tuntia niin säilytetään ID samana niin kauan kun ollaan paikallaan.
+    DRID4=if(Dhour<36)then(DRID7)else(DRID5)                                                / "Träkkäystaukolaukaisin."
+    DRID5=if(Dhour[-1]>=36)then(DRID6)else(routeID[-1]+1)                                   / "Vahinkoträkkäysvarmistin."
+    DRID6=if(DDistance>=500)then(routeID[-1]+1)else(routeID[-1])                            / "Välimatkalaukaisin."
+    DRID7=if(RDir[0]=RDir[-1])then(routeID[-1])else(DRID8)                                  / Suunnanvaihdoslaukaisin. Jos träkkääkin koko ajan, niin otetaan vielä suunnanmuutoskin huomioon.
+    DRID8=if((Dhour[1]+Dhour+Dhour[-1]+Dhour[-2])>20)then(routeID[-1])else(routeID[-1]+1)   / "Aikaerovarmistin." Jos lähistöllä on pitkä träkkäystauko, niin ei kasvateta virheellisesti ID:tä,
+.................................................................................................................................................................................................
+    ERID2=if(routeID[-1]=routeID)then(CUMDDist[-1]+DDistance)else(0)
+VAR MoveH:8=MISSING TO BOAT3GPS<identifier>
+VAR MoveH=if(ORDER=1)then(TrouteH)else(FRID2) TO BOAT3GPS<identifier>         / Kumulatiivinen matka-aika liikkeessäollessa.
+     FRID2=if(routeID[-1]=routeID)then(FRID3)else(0)
+     FRID3=if(speed>0.5)then(MoveH[-1]+Dhour)else(MoveH[-1])                  / Nopeus on 0.5, jotta saadaan poistettua virhe johtuen Yurmimaguaksen kahdesta satamasta.
+VAR CUMspeed:8=MISSING TO BOAT3GPS<identifier>
+VAR CUMspeed=if(CUMDDist=0)then(0)else(CUMDDist/MoveH) TO BOAT3GPS<identifier>  / Kumulatiivinen keskinopeus.
+VAR AvgSpd:8=MISSING TO BOAT3GPS<identifier>
+VAR AvgSpd=if(CUMspeed=0)then(MISSING)else(if(routeID[1]=routeID)then(MISSING)else(CUMspeed)) TO BOAT3GPS<identifier>  / Osareitin kokonaiskeskinopeus
+VAR distPUC:8=MISSING TO BOAT3GPS<identifier>
+VAR distYUR:8=MISSING TO BOAT3GPS<identifier>
+VAR distYUR=abs(distance-679) TO BOAT3GPS<identifier>
+VAR distSAR:8=MISSING TO BOAT3GPS<identifier>
+VAR hToIQT:8=MISSING TO BOAT3GPS<identifier>
+VAR hToIQT=if(distance=0)then(0)else(GRID2) TO BOAT3GPS<identifier>
+     GRID2=if(CUMspeed=0)then(0)else(abs(distance/CUMspeed))
+VAR hToPUC:8=MISSING TO BOAT3GPS<identifier>
+...........................................................................................................................................................................................
+VAR hToYUR:8=MISSING TO BOAT3GPS<identifier>
+VAR hToYUR=if(distYUR=0)then(0)else(HRID2) TO BOAT3GPS<identifier>
+     HRID2=if(CUMspeed=0)then(0)else(abs(distYUR/CUMspeed))
+VAR hToSAR:8=MISSING TO BOAT3GPS<identifier>
+...........................................................................................................................................................................................
+VAR StDist:8=MISSING TO BOAT3GPS<identifier>
+VAR StDist=if(ORDER=1)then(IRID2)else(IRID) TO BOAT3GPS<identifier>
+      IRID=if(routeID=MISSING)then(MISSING)else(IRID1)
+     IRID1=if(routeID[-1]=routeID)then(MISSING)else(IRID3)
+     IRID2=if(RDir[1]=2)then(IRID4)else(IRID5)
+     IRID3=if(RDir[2]=2)then(IRID4)else(IRID5)
+     IRID4=if(Julian<2456324)then(IRIDa4)else(IRIDb4)      / BOAT3 on vaihtanut reitin helmikuussa Yurimaguaksesta Pucallpaan. Vaihdetaan laskentalogiikka helmikuun jälkeen.
+     IRIDa4=if(distance>=679)then(0)else(abs(679-distance)) / Päätesatama Yurimaguas
+     IRIDb4=if(distance=1120)then(0)else(abs(1120-distance)) / Päätesatama Pucallpa
+     IRID5=if(distance=0)then(0)else(distance)
+VAR StDist=if(ORDER=1)then(StDist)else(IRID6) TO BOAT3GPS<identifier>
+     IRID6=if(routeID[-1]=routeID)then(StDist[-1])else(StDist)
+...........................................................................................................................................................................................
+VAR EnDist:8=MISSING TO BOAT3GPS<identifier>
+VAR EnDist=if(routeID=MISSING)then(MISSING)else(JRID1) TO BOAT3GPS<identifier>
+     JRID1=if(AvgSpd=MISSING)then(MISSING)else(JRID2)
+     JRID2=if(RDir=2)then(JRID3)else(JRID4)
+     JRID3=if(distance=0)then(0)else(distance)
+     JRID4=if(Julian<2456324)then(JRIDa4)else(JRIDb4)      / BOAT3 on vaihtanut reitin helmikuussa Yurimaguaksesta Pucallpaan. Vaihdetaan laskentalogiikka helmikuun jälkeen.
+     JRIDa4=if(distance>=679)then(0)else(abs(distance-679)) / Päätesatama Yurimaguas
+     JRIDb4=if(distance=1120)then(0)else(abs(distance-1120)) / Päätesatama Pucallpa
+..................................................................................................................
+VAR TStart:8=MISSING TO BOAT3GPS<identifier>
+VAR TStart=StDist/AvgSpd TO BOAT3GPS<identifier>
+VAR TEnd:8=MISSING TO BOAT3GPS<identifier>
+VAR TEnd=EnDist/AvgSpd TO BOAT3GPS<identifier>
+VAR LosTime:8=MISSING TO BOAT3GPS<identifier>
+VAR LosTime=TStart+TEnd TO BOAT3GPS<identifier>        / Voidaan hyödyntää osareittien laadun arvioinnissa myös.
+VAR TotTime:8=MISSING TO BOAT3GPS<identifier>
+VAR TotTime=if(TEnd=MISSING)then(MISSING)else(TrouteH+LosTime) TO BOAT3GPS<identifier>
+VAR TAngle:8=MISSING TO BOAT3GPS<identifier>
+VAR TAngle=if(TotTime=MISSING)then(MISSING)else((dayNum/366)*360) TO BOAT3GPS<identifier>
+...........................................................................................................................................................................................
+FILE COPY BOAT1GPS<identifier>,BoatRoutes<identifier>
+FILE COPY BOAT2GPS<identifier>,BoatRoutes<identifier>
+FILE COPY BOAT3GPS<identifier>,BoatRoutes<identifier>
+
+KULKUSUUNNAN RAJAUS:
+SELECT=<direction>
+1=RDir:1  2=RDir:2
+
+Tulostaulun muuttujat:
+VARS=id,lat,lon,time,weekday,dayNum,Day,Julian,Dhour,RDir,TSTOP,distance,DDistanc,CUMDDist,speed,CUMspeed,AvgSpd,routeID,TrouteD,MoveH,TotTime,LosTime,StDist,EnDist,TStart,TEnd,TAngle,hTo
+
+...........................................................................................................................................................................................
+SKAALA:
+MINSTAT BoatRoutes<identifier> CUR+1 / VARS=IDnum,Day
+
+
+
+
+COPYBLO M+4,51,M+4,56,P,32
+COPYBLO M+5,51,M+5,56,Q,40
+...........................................................................................................................................................................................
+PLOTTAUKSET:
+
+SIZE=1320,360 XDIV=1,20,1 YDIV=0,550,50
+FRAME=6 HEADER=               XLABEL= YLABEL= XSCALE=0:?,3000:?
+
+ *kynä=[Swiss(10)][rot(0)][move(0,0)][BLACK]
+PEN=*kynä LINETYPE=*kynä               LINE=1
+
+ *y1=[rot(90)][move(-180,-300)],difference(hour)
+ *y2=[rot(90)][move(-180,-300)],log(difference(min))
+
+ *yscale1=0(24)96
+ *yscale2=1(1)10
+ *xscale=[move(-35,-10)],0(250)
+
+*H=[Swiss(36)][rot(-90)][move(1550,-100)][GREEN],TIME-GAPS_BETWEEN_GPS-TRACKS
+*I=[Swiss(11)][move(1430,-830)][RED],27.12.2011-31.12.2012
+
+*T1=[SwissB(19)][rot(-90)][move(0480,240)][RED],B_O_A_T_1
+*T2=[SwissB(19)][rot(-90)][move(0580,240)][RED],B_O_A_T_2
+*T3=[SwissB(19)][rot(-90)][move(0680,280)][RED],B_O_A_T_3
+
+PLOT BOAT1GPS<identifier>     IDnum Dhour  / DEVICE=PS,H1.PS YSCALE=*yscale1 HEADER=*H      YLABEL=*y1 XLABEL=*T1 XSCALE=*xscale
+PLOT BOAT2GPS<identifier>    IDnum Dhour  / DEVICE=PS,G1.PS YSCALE=*yscale1 HEADER=*I      YLABEL=*y1 XLABEL=*T2 XSCALE=*xscale
+PLOT BOAT3GPS<identifier>   IDnum Dhour  / DEVICE=PS,L1.PS YSCALE=*yscale1                YLABEL=*y1 XLABEL=*T3 XSCALE=*xscale
+
+H1=H1.PS,50,2300
+L1=L1.PS,50,1400
+G1=G1.PS,50,0500
+...........................................................................................................................................................................................
+REITTIEN PITUUS PÄIVÄSSÄ - PLOT (<identifier>)
+
+SIZE=1320,360 XDIV=1,20,1 YDIV=0,550,50
+FRAME=6 HEADER=               XLABEL= YLABEL= XSCALE=0:?,3000:?
+
+ *kynä=[Swiss(10)][rot(0)][move(0,0)][BLACK]
+PEN=*kynä LINETYPE=*kynä               LINE=5
+
+ *y1=[rot(90)][move(-180,-300)],difference(hour)
+ *y2=[rot(90)][move(-180,-300)],log(difference(min))
+
+ *yscale1=0(48)480
+ *yscale2=1(1)10
+ *xscale=[Swiss(6)][move(-10,-10)],0(7)
+
+*H=[Swiss(36)][rot(-90)][move(1550,150)][GREEN],THE_DURATION_OF_TRIPS_BETWEEN_STOPS
+
+*T1=[SwissB(19)][rot(-90)][move(0480,240)][RED],B_O_A_T_1
+*T2=[SwissB(19)][rot(-90)][move(0580,240)][RED],B_O_A_T_2
+*T3=[SwissB(19)][rot(-90)][move(0680,280)][RED],B_O_A_T_3
+
+PLOT BOAT1GPS<identifier>   Day Dhour  / DEVICE=PS,HD1.PS YSCALE=*yscale1  HEADER *H     XSCALE=*xscale YLABEL=*y1 XLABEL=Days
+PLOT BOAT2GPS<identifier>  Day Dhour  / DEVICE=PS,GD1.PS YSCALE=*yscale1                XSCALE=*xscale YLABEL=*y1 XLABEL=Days
+PLOT BOAT3GPS<identifier> Day Dhour  / DEVICE=PS,LD1.PS YSCALE=*yscale1                XSCALE=*xscale YLABEL=*y1 XLABEL=Days
+
+HD1=HD1.PS,50,1900
+LD1=LD1.PS,50,1000
+GD1=GD1.PS,50,0100
+...........................................................................................................................................................................................
+PRINT CUR+1,E-1 TO BoatGraphs<identifier>.PS
+ 420
+ picture H1.ps,250,*
+ 400
+ picture HD1.ps,250,*
+ 530
+ picture L1.ps,250,*
+ 400
+ picture LD1.ps,250,*
+ 530
+ picture G1.ps,250,*
+ 400
+ picture GD1.ps,250,*
+
+...........................................................................................................................................................................................
+FILE DEL H1.PS
+FILE DEL H2.PS
+FILE DEL G1.PS
+FILE DEL G2.PS
+FILE DEL L1.PS
+FILE DEL L2.PS
+FILE DEL HD1.PS
+FILE DEL HD2.PS
+FILE DEL GD1.PS
+FILE DEL GD2.PS
+FILE DEL LD1.PS
+FILE DEL LD2.PS
+FILE DEL GPSData<identifier>
+FILE DEL BOAT1GPS<identifier>
+FILE DEL BOAT2GPS<identifier>
+FILE DEL BOAT3GPS<identifier>
+FILE DEL GPSDataKorjattu
+FILE DEL textMod.txt
+FILE DEL inputData
+FILE DEL inputDataClean
+FILE DEL KOPIOPVM
+.......................................................................................................................................
+FILE LOAD BoatRoutes<identifier> TO R>data
+R r,R
+R-KOODIA!!!
+library(sp)
+library(rgdal)
+library(maptools)
+data$lat <- as.numeric(data$lat)
+data$lon <- as.numeric(data$lon)
+boats.sp<-SpatialPointsDataFrame(data[,3:2],data,proj4string=CRS("+proj=longlat +datum=WGS84")) #sp-paketti
+writePointsShape(boats.sp,"BoatPoints<identifier>")         #maptools-paketti
+showWKT(proj4string(boats.sp),file="BoatPoints<identifier>.prj")  #rgdal-paketti
+.......................................................................................................................................
+SAVE FILTER
+
+.......................................................................................................................................
+/GS-PDF BoatGraphs<identifier>.PS
+
+.......................................................................................................................................
+TAKE A LOOK AT THE TABLE THAT WAS PRODUCED:
+
+FILE SHOW BoatRoutes<identifier>
+
+.......................................................................................................................................
+
+
+....................................................................................................................................................
+- INSTRUCTIONS:       / PALAA TAKAISIN PAINAMALLA ESC!
+ <filename>=       .txt -tiedosto, jossa aineisto on.
+ <identifier>     = aineiston yksilöivä tunniste, jotta ei tuhota vanhaa aineistoa! (esim. päivämäärä/tarkasteltava aikaväli (kkvv-kkvv)
+ <startDate>      = tarkasteltavan aikaikkunan aloituspäivämäärä (esim. 01.01.2000)
+ <endDate>     = tarkasteltavan aikaikkunan lopetuspäivämäärä (esim. 31.12.2050)
+....................................................................................................................................................
+
+
+.............................................................................................................................................
+- COMMITCHANGES
+NOTICE! THIS SAVES ALL THE CHANGES THAT YOU HAVE MADE TO THE TOOL. USE THIS IF YOU ARE ABSOLUTELY SURE
+THAT YOU WANT TO MODIFY THE CODE OF THIS TOOL.
+
+IF YOU WANT TO RELOAD THE TOOL USE LOAD TRAT INSTEAD:
+LOAD TRAT
+
+COMMIT CHANGES TO THE CODE:
+SAVE TRAT
+
+.............................................................................................................................................
+
+
+
+
